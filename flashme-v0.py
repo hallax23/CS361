@@ -5,6 +5,9 @@ Created on Mon Feb 10 08:01:58 2025
 @author: user_name
 """
 
+import json
+import zmq
+
 class player:
     """
     used to keep track of current deck, and maybe future features
@@ -16,9 +19,14 @@ class flashCard:
     """
     used to store each flashcards info
     """
-    def __init__(self, front, back):
+    def __init__(self, front, back, favorite=0):
         self.front = front
         self.back = back
+        self.favorite = favorite
+        
+    def convert_to_dict(self):
+        
+        return {"front": self.front, "back":self.back, "favorite": self.favorite}
 
 
 def main():
@@ -47,7 +55,8 @@ def home_page():
     print ('0. Create deck')
     print ('1. Info')
     print ('2. Exit')
-    choice = make_choice(2)
+    print ('3. Import deck')
+    choice = make_choice(3)
     
     if choice == 0:
         create_deck()
@@ -55,6 +64,8 @@ def home_page():
         info_page()
     if choice == 2:
         return
+    if choice ==3:
+        import_json()
     
 def info_page():
     """
@@ -86,14 +97,17 @@ def deck_selected_page():
     
     print ('0. Practice selected deck')
     print ('1. Select another deck (home page)')
+    print ('2. Randomize order')
+    print ('3. Export to JSON')
+    print ('4. Remove non-favorite cards')
     
-    choice = make_choice(1)
+    choice = make_choice(4)
     if choice == 0:
         practice_deck(player.deck)
     if choice == 1:
         
         # over write warning
-        print ('Are you sure you wish to contiue? Creating a new deck will overwrite your old one.')
+        print ('Are you sure you wish to contiue? Creating a new deck will overwrite any unsaved data.')
         
         print ('0. Yes')
         print ('1. No')
@@ -103,6 +117,15 @@ def deck_selected_page():
             home_page()
         if choice == 1:
             deck_selected_page()
+            
+    if choice == 2:
+        sort_json(convert_to_json())
+    if choice == 3:
+        export_to_json(convert_to_json())
+    if choice == 4:
+        remove_favorites()
+        
+        
         
 
         
@@ -153,12 +176,15 @@ def practice_deck(deck):
         # choice for what to do next
         print ('0. Reveal definition')
         print ('1. Next term')
-        print ('2. Exit')
+        print ('2. Mark as favorite')
+        print ('3. Exit')
         
-        choice = make_choice(2)
+        choice = make_choice(3)
         if choice == 0:
             print (card.back)
         if choice == 2:
+            card.favorite = 1
+        if choice == 3:
             return deck_selected_page()
     
     # once gone through all cards
@@ -189,4 +215,139 @@ def make_choice(max_choice):
             
         print ('The number you entered wasnt an option, please try again.')
         
+
+def convert_to_json():
+    """takes the current deck and turns it into json format"""
+    
+    flashcards_data = [card.convert_to_dict() for card in player.deck]
+    
+    return flashcards_data
+        
+def unpack_json(flashcards_json):
+    """takes json format flashcard deck and turns it back to normal"""
+    
+    deck = []
+
+    for card in flashcards_json:
+        front = card['front']
+        back = card['back']
+        favorite = card['favorite']
+        new_card = flashCard(front, back, favorite)
+        deck.append(new_card)
+    
+    return deck
+    
+        
+def sort_json(flashcard_json):
+    """uses microservice a to randomize order or cards"""
+    
+    context = zmq.Context()
+    print("Client attempting to connect to server...")
+    socket = context.socket(zmq.REQ)
+    socket.connect("tcp://localhost:5556")
+    
+    data_to_send = flashcard_json
+    
+    socket.send_string('random', flags=zmq.SNDMORE)
+
+    socket.send_json(data_to_send)
+    
+    sorted_flashcards = socket.recv_json()
+    
+    player.deck = unpack_json(sorted_flashcards)
+    
+    context.destroy()
+    
+    deck_selected_page()
+    
+def export_to_json(flashcard_json):
+    """uses microservice b to export to json file"""
+    
+    context = zmq.Context()
+    print("Client attempting to connect to server...")
+    try:
+        socket = context.socket(zmq.REQ)
+        socket.connect("tcp://localhost:5557")
+    except KeyboardInterrupt:
+        exit()
+    
+    print ('Type the desired filename and hit enter')
+    file_name = input()
+    
+    socket.send_string(file_name, flags=zmq.SNDMORE)
+    socket.send_json(flashcard_json)
+    
+    confirmation = socket.recv_string()
+    
+    print(confirmation)
+    
+    context.destroy()
+    
+    deck_selected_page()
+    
+def import_json():
+    """uses microservice c to import a json file"""
+    
+    context = zmq.Context()
+    print("Client attempting to connect to server...")
+    try:
+        socket = context.socket(zmq.REQ)
+        socket.connect("tcp://localhost:5558")
+    except KeyboardInterrupt:
+        exit()
+    
+    print('Type the name of the JSON file you would like to import')
+    file_name = input()
+    
+    socket.send_string(file_name)
+    
+    flashcards = socket.recv_json()
+    
+    player.deck = unpack_json(flashcards)
+    
+    
+    context.destroy()
+    
+    deck_selected_page()
+    
+def remove_favorites():
+    """uses microservice d to remove non favorite cards"""
+    
+    print('Would you like to save over the currently selected deck or save as a new deck?')
+    print('0. Save over currently selected deck')
+    print('1. Save as new deck')
+    choice = make_choice(1)
+    
+    context = zmq.Context()
+    print("Client attempting to connect to server...")
+    try:
+        socket = context.socket(zmq.REQ)
+        socket.connect("tcp://localhost:5561")
+    except KeyboardInterrupt:
+        exit()
+    
+    socket.send_json(convert_to_json())
+    
+    no_fav_flashcards = socket.recv_json()
+    
+    context.destroy()
+    
+    
+    if choice == 0:
+        # overwrites current deck
+        player.deck = unpack_json(no_fav_flashcards)
+        
+    if choice ==1:
+        #saves new deck to json
+        export_to_json(no_fav_flashcards)
+        
+    deck_selected_page()
+        
+    
+    
+    
+    
+    
+        
+    
 main()
